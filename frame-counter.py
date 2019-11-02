@@ -33,10 +33,13 @@ def count_frames(video_file, start_frame, end_frame, load_threshold, blank_thres
     orig_ar = blank_image.shape[1] / blank_image.shape[0]
     new_ar = roi[2] / roi[3]
     adjustment = 1 - ((1 - (orig_ar / new_ar)) / 2)
-    capture.set(1, start_frame - 4)
-    success, brightness_frame = capture.read()
-    brightness_frame = brightness_frame[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]
-    brightness = brightness_frame[5, 5, 0] - blank_image[0, 0, 0]
+    if start_frame > 4:
+        capture.set(1, start_frame - 4)
+        success, brightness_frame = capture.read()
+        brightness_frame = brightness_frame[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]
+        brightness = brightness_frame[5, 5, 0] - blank_image[0, 0, 0]
+    else:
+        brightness = 0
 
     if 1.33 <= new_ar:
         print(f"Adjusting scale by: {adjustment}")
@@ -55,7 +58,7 @@ def count_frames(video_file, start_frame, end_frame, load_threshold, blank_thres
 
     frame = frame[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]
     base_match = check_for_load(frame, blank_image)
-    load_threshold_adjustment = (base_match - 0.80) / 2
+    load_threshold_adjustment = max((base_match - 0.80) / 2, 0)
     print(f"Adjusting load image threshold by: {load_threshold_adjustment}")
     load_threshold -= load_threshold_adjustment
 
