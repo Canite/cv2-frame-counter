@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import sys
 import io
+import math
 import argparse
 import glob
 import datetime
@@ -11,7 +12,7 @@ import multiprocessing as mp
 np.set_printoptions(threshold=sys.maxsize)
 
 
-def count_frames(video_file, start_frame, end_frame, load_threshold, blank_threshold, threads):
+def count_frames(video_file, start_frame, end_frame, load_threshold, blank_threshold, blank_frame, threads):
     capture = cv2.VideoCapture(video_file)
     capture.set(1, start_frame)
     fps = capture.get(5)
@@ -27,25 +28,26 @@ def count_frames(video_file, start_frame, end_frame, load_threshold, blank_thres
         sys.exit(1)
 
     blank_image = cv2.imread("ref_images/blank.png", cv2.IMREAD_GRAYSCALE)
-    blank_image = cv2.cvtColor(blank_image, cv2.COLOR_GRAY2BGR)
+    # blank_image = cv2.cvtColor(blank_image, cv2.COLOR_GRAY2BGR)
     scale = (roi[2] / blank_image.shape[1], roi[3] / blank_image.shape[0])
 
     orig_ar = blank_image.shape[1] / blank_image.shape[0]
     new_ar = roi[2] / roi[3]
     adjustment = 1 - ((1 - (orig_ar / new_ar)) / 2)
-    if start_frame > 4:
-        capture.set(1, start_frame - 4)
-        success, brightness_frame = capture.read()
-        brightness_frame = brightness_frame[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]
-        brightness = brightness_frame[5, 5, 0] - blank_image[0, 0, 0]
-    else:
-        brightness = 0
+    capture.set(1, blank_frame)
+    success, brightness_frame = capture.read()
+    brightness_frame = cv2.cvtColor(brightness_frame, cv2.COLOR_BGR2GRAY)
+    brightness_frame = brightness_frame[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]
+    brightness = np.mean(brightness_frame[5, 5] - blank_image[0, 0])
+    base_blank_match = check_for_load(brightness_frame, blank_image)
+    blank_threshold = math.floor(base_blank_match * 1000) / 1000.0 - 0.001
 
     if 1.33 <= new_ar:
         print(f"Adjusting scale by: {adjustment}")
         scale = (scale[0] * adjustment, scale[1])
 
-    load_images = [cv2.cvtColor(cv2.imread(ref_file, cv2.IMREAD_GRAYSCALE), cv2.COLOR_GRAY2BGR)
+    # load_images = [cv2.cvtColor(cv2.imread(ref_file, cv2.IMREAD_GRAYSCALE), cv2.COLOR_GRAY2BGR)
+    load_images = [cv2.imread(ref_file, cv2.IMREAD_GRAYSCALE)
                    for ref_file in glob.glob("ref_images/*.png") if ref_file != "ref_images\\blank.png"]
 
     print(f"Adjusting brightness by: {brightness}")
@@ -57,8 +59,9 @@ def count_frames(video_file, start_frame, end_frame, load_threshold, blank_thres
     blank_image = cv2.resize(blank_image, (roi[2], roi[3]), interpolation=cv2.INTER_AREA)
 
     frame = frame[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]
-    base_match = check_for_load(frame, blank_image)
-    load_threshold_adjustment = max((base_match - 0.80) / 2, 0)
+    frame = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    base_load_match = check_for_load(frame, blank_image)
+    load_threshold_adjustment = max((base_load_match - 0.80) / 2, 0)
     print(f"Adjusting load image threshold by: {load_threshold_adjustment}")
     load_threshold -= load_threshold_adjustment
 
@@ -81,7 +84,7 @@ def count_frames(video_file, start_frame, end_frame, load_threshold, blank_thres
                     print(f"Failed to read frame: {frame_num}")
                     continue
                 frame = frame[roi[1]:roi[1] + roi[3], roi[0]:roi[0] + roi[2]]
-                frames.append(frame)
+                frames.append(cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY))
                 frame_num += 1
                 if frame_num >= end_frame:
                     finished = True
@@ -251,6 +254,8 @@ if __name__ == "__main__":
                         required=False, default=0.999, help="Threshold for detecting blank load screens")
     parser.add_argument("-t", "--threads", type=int,
                         required=False, default=4, help="Number of threads to run")
+    parser.add_argument("-b", "--blank", type=int,
+                        required=False, default=0, help="Frame with blank image")
     parser.add_argument("-sf", "--save", action="store_true", help="Save the frame at -s into file -o")
     parser.add_argument("-o", "--output", help="Output filename")
     args = parser.parse_args()
@@ -259,7 +264,7 @@ if __name__ == "__main__":
     else:
         assert args.end > args.start, "End frame must be after start frame"
         loading_frames, total_frames, adjusted_frames, time_with_loads, time_without_loads \
-            = count_frames(args.input, args.start, args.end, args.loadthreshold, args.blankthreshold, args.threads)
+            = count_frames(args.input, args.start, args.end, args.loadthreshold, args.blankthreshold, args.blank, args.threads)
         print(f"Total frames: {total_frames}")
         print(f"Frames to remove: {loading_frames}")
         print(f"Adjusted frames: {adjusted_frames}")
